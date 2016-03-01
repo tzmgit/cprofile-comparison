@@ -1,11 +1,13 @@
 import re
+import os
 import pstats
 from cStringIO import StringIO
 from collections import namedtuple, OrderedDict
 
 
 HEADER_LINE_REGEX = r'ncalls|tottime|cumtime'
-Stat = namedtuple('Stat', ['ncalls', 'tottime', 'tottime_percall', 'cumtime', 'percall'])
+STAT_KEYS = ['ncalls', 'tottime', 'tottime_percall', 'cumtime', 'percall']
+Stat = namedtuple('Stat', STAT_KEYS)
 
 
 def get_stats(stat_file, sort='cumtime', stat_filters=None):
@@ -39,31 +41,40 @@ def get_stats(stat_file, sort='cumtime', stat_filters=None):
     return data_dict
 
 
-def combine_stats(report_file_path, stats1, stats2, title1='stats1', title2='stats2'):
-    title1 = title1 or 'stats1'
-    title2 = title2 or 'stats2'
+def generate_report(report_file_path, stats, titles=None, stat_source_files=None, export_cols=None):
+    col_headers = []
+    len_stats = len(stats)
+    range_stats = range(len_stats)
+    if not titles or len(titles) != len(stats):
+        if stat_source_files:
+            titles = [os.path.basename(f) for f in stat_source_files]
+        else:
+            titles = ['stat%d' % (i +1) for i in range_stats]
+    export_cols = export_cols or STAT_KEYS
+    row_cols = []
+    for i, c in enumerate(export_cols):
+        col_headers.append(','.join(['{%d}.%s' % (j, c) for j in range_stats]))
+        row_cols.append(','.join(['{%d}' % (s * len(export_cols) + i + 1) for s in range_stats]))
+    header_template = 'function,' + ','.join(col_headers) + '\n'
+    row_template = '{0},' + ','.join(row_cols) + '\n'
+
     with open(report_file_path, "w") as report:
-        report.write(('function,' +
-                     '{0}.ncalls,{1}.ncalls,diff.ncalls({1}-{0}),' +
-                     '{0}.tottime,{1}.tottime,diff.tottime({1}-{0}),' +
-                     '{0}.tottime_percall,{1}.tottime_percall,diff.tottime_percall({1}-{0}),' +
-                     '{0}.cumtime,{1}.cumtime,diff.cumtime({1}-{0}),' +
-                     '{0}.percall,{1}.percall,diff.percall({1}-{0}),' +
-                     '\n').format(title1, title2))
-        for key, stat1 in stats1.iteritems():
-                if key in stats2:
-                    stat2 = stats2[key]
-                report.write('{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n'.format(key,
-                                                    stat1.ncalls, stat2.ncalls, stat2.ncalls - stat1.ncalls,
-                                                    stat1.tottime, stat2.tottime, stat2.tottime - stat1.tottime,
-                                                    stat1.tottime_percall, stat2.tottime_percall, stat2.tottime_percall - stat1.tottime_percall,
-                                                    stat1.cumtime, stat2.cumtime, stat2.cumtime - stat1.cumtime,
-                                                    stat1.percall, stat2.percall, stat2.percall - stat1.percall))
+        report.write(header_template.format(*titles))
+        for key, stat in stats[0].iteritems():
+            row_vals = [key]
+            row_vals.extend([getattr(stat, c) for c in export_cols])
+            for tmp_stat in stats[1:]:
+                if key in tmp_stat:
+                    row_vals.extend([getattr(tmp_stat[key], c) for c in export_cols])
+                else:
+                    row_vals.extend(['' for _ in export_cols])
+            report.write(row_template.format(*row_vals))
     print '\nGenerated report file: %s' % report_file_path
 
 
-def compare_stats(stat_file1, stat_file2, report_file, title1=None, title2=None, stat_filters=None):
-    d1 = get_stats(stat_file1, stat_filters=stat_filters)
-    d2 = get_stats(stat_file2, stat_filters=stat_filters)
-    combine_stats(report_file, d1, d2, title1=title1, title2=title2)
+def compare_stats(report_file, stat_source_files, titles=None, stat_filters=None, export_cols=None):
+    stats = []
+    for stat_file in stat_source_files:
+        stats.append(get_stats(stat_file, stat_filters=stat_filters))
+    generate_report(report_file, stats, titles=titles, stat_source_files=stat_source_files, export_cols=export_cols)
 
